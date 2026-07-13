@@ -7,6 +7,11 @@ import re
 import json
 import requests
 
+import os
+import tempfile
+import yaml  # Import PyYAML for strict validation
+from git import Repo
+
 # Set page configuration
 st.set_page_config(
     page_title="Metadata-as-Infrastructure: EKAW 2026 Companion",
@@ -28,7 +33,7 @@ page = st.sidebar.radio(
     "Go to:",
     [
         "1. Core Contribution Flow", 
-        "2. web4.py Ingestion Engine & VM Sandbox Simulator", 
+        "2. Ansible Script generator, validator & VM Sandbox Simulator", 
         "3. Experiment Reproducer Simulator", 
         "4. Dataset Tables & Deep Dive"
     ]
@@ -255,137 +260,212 @@ if page == "1. Core Contribution Flow":
     plt.axis('off')
     st.pyplot(fig)
 
-# ---------------------------------------------------------
-# PAGE 2: INGESTION ENGINE & VM SANDBOX SIMULATOR
-# ---------------------------------------------------------
-elif page == "2. web4.py Ingestion Engine & VM Sandbox Simulator":
-    st.header("🔍 Live GitHub Ingestion & Verification Sandbox Engine")
-    st.markdown("Select an existing entry or choose **[Enter Custom Repository URL]** to verify dynamic metadata extraction blocks.")
+def extract_exact_packages(tmp_dir, target_files):
+    """
+    Scans the repository globally using file extensions and manifest rules
+    to capture all programming languages, runtimes, and build tools.
+    """
+    packages = {"apt": set(), "pip": set(), "npm": set(), "r": set()}
     
-    repo_options = ["[Enter Custom Repository URL]"] + [item[0] for item in clariah_repos]
-    selected_option = st.selectbox("🔗 Choose Target Registry URL Reference:", repo_options)
+    detected_extensions = {
+        '.py': 'python3',
+        '.r': 'r-base',
+        '.R': 'r-base',
+        '.js': 'nodejs',
+        '.ts': 'nodejs',
+        '.c': 'gcc',
+        '.cpp': 'g++',
+        '.cc': 'g++',
+        '.pl': 'swi-prolog',
+        '.sh': 'bash',
+        '.java': 'default-jdk',
+        '.go': 'golang',
+        '.rs': 'rustc'
+    }
+
+    for root, _, files in os.walk(tmp_dir):
+        for file in files:
+            file_path = os.path.join(root, file)
+            _, ext = os.path.splitext(file)
+            
+            if ext in detected_extensions:
+                packages["apt"].add(detected_extensions[ext])
+                
+            if file in ["Makefile", "CMakeLists.txt"]:
+                packages["apt"].add("build-essential")
+            if file == "configure":
+                packages["apt"].add("autoconf")
+                packages["apt"].add("make")
+
+            if file not in target_files:
+                continue
+            
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                
+                if file in ["requirements.txt", "setup.py", "pyproject.toml"]:
+                    matches = re.findall(r'^[a-zA-Z0-9_\-\[\]]+', content, re.MULTILINE)
+                    for match in matches:
+                        if match.lower() not in ["python", "pip", "setuptools"]:
+                            packages["pip"].add(match.strip())
+                            
+                elif file == "package.json":
+                    data = json.loads(content)
+                    deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
+                    for dep in deps.keys():
+                        packages["npm"].add(dep)
+                        
+                elif file == "DESCRIPTION":
+                    sections = re.findall(r'(?:Imports|Depends|Suggests):\s*([^Configuration|System|Description|License]+)', content, re.DOTALL)
+                    for section in sections:
+                        clean_pkgs = re.findall(r'[a-zA-Z0-9\.]+', section)
+                        for pkg in clean_pkgs:
+                            if pkg not in ["R", "Imports", "Depends", "Suggests"]:
+                                packages["r"].add(pkg)
+                                
+                elif file == "codemeta.json":
+                    data = json.loads(content)
+                    reqs = data.get("softwareRequirements", []) or data.get("targetProduct", {}).get("softwareRequirements", [])
+                    if isinstance(reqs, list):
+                        for req in reqs:
+                            if isinstance(req, str):
+                                packages["apt"].add(req.split()[0])
+                            elif isinstance(req, dict) and "name" in req:
+                                packages["apt"].add(req["name"])
+                                
+                if file.lower() == "readme.md":
+                    system_tools = ["docker", "docker-compose", "git", "gdal-bin", "libgdal-dev", "libproj-dev", "libgeos-dev", "postgresql", "redis", "tesseract-ocr"]
+                    for tool in system_tools:
+                        if tool in content.lower():
+                            packages["apt"].add(tool)
+            except Exception:
+                pass
+                
+    return {k: sorted(list(v)) for k, v in packages.items()}
+
+# --- Streamlit Page 2 Setup ---
+st.title("Page 2: Automation Playbook Generator")
+st.write("Generate and validate an optimized Ansible playbook for provisioning target repository code environment setups.")
+
+# User Inputs
+repo_url = st.text_input("Enter GitHub Repository URL:", value="https://github.com/sodascience/osmenrich")
+model_choice = st.selectbox("Select Ollama Model Engine:", ["llama3.2:1b", "mistral", "llama3"])
+
+if st.button("Generate & Validate Playbook"):
+    ollama_url = "http://127.0.0.1:11434/api/generate"
     
-    if selected_option == "[Enter Custom Repository URL]":
-        target_repo = st.text_input("✍️ Paste Custom GitHub Repository URL Here:", value="https://github.com/custom-user/test-project")
-    else:
-        target_repo = selected_option
+    # 1. Connection Precheck
+    try:
+        requests.get("http://127.0.0.1:11434", timeout=3)
+    except requests.exceptions.ConnectionError:
+        st.error("Error: Local Ollama daemon service is offline. Please launch 'ollama serve' first.")
+        st.stop()
 
-    if "current_repo" not in st.session_state or st.session_state.current_repo != target_repo:
-        st.session_state.current_repo = target_repo
-        st.session_state.ansible_script = None
-        st.session_state.ttl_metadata = None
-        st.session_state.profile = None
+    with st.spinner("Analyzing repository structure and software components..."):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            try:
+                Repo.clone_from(repo_url, tmp_dir, depth=1)
+            except Exception as e:
+                st.error(f"Git Clone Error: {e}")
+                st.stop()
 
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        execute_harvest = st.button("🚀 Harvest Codebase & Execute Semantic Introspection")
-    with col_btn2:
-        execute_sandbox = st.button("💻 Spin Up Virtual Sandbox VRE Instance & Execute Playbook")
+            target_files = ["requirements.txt", "codemeta.json", "package.json", "DESCRIPTION", "setup.py", "pyproject.toml", "readme.md", "README.md", "environment.yml"]
+            discovered_software = extract_exact_packages(tmp_dir, target_files)
 
-    if execute_harvest:
-        with st.spinner("Querying source codebase artifacts live..."):
-            live_payload = harvest_live_github_manifests(target_repo)
-            
-        if not live_payload and selected_option != "[Enter Custom Repository URL]":
-            live_payload = {
-                "readme.md": "Baseline structural alignment asset configuration.",
-                "requirements.txt": "requests>=2.25.1\npandas>=1.2.0\nnumpy>=1.19.5" if "python" in repo_registry_dict.get(target_repo, {"lang": "python"})["lang"].lower() else ""
-            }
-            
-        if not live_payload:
-            st.error("❌ The repository could not be reached, or lacks file assets (README, requirements.txt, package.json, pom.xml).")
-        else:
-            st.success(f"📦 Successfully parsed repository manifest tree elements! Found files: {', '.join(live_payload.keys())}")
-            with st.spinner("Running Introspection Engine parsing routines..."):
-                profile = execute_strict_evidence_reasoning(live_payload, target_repo)
-                st.session_state.profile = profile
+    # 2. Logic Injection Framework
+    if discovered_software["pip"] and "python3-pip" not in discovered_software["apt"]:
+        discovered_software["apt"].append("python3-pip")
+    if discovered_software["npm"] and "nodejs" not in discovered_software["apt"]:
+        discovered_software["apt"].append("nodejs")
+    if discovered_software["r"] and "r-base" not in discovered_software["apt"]:
+        discovered_software["apt"].append("r-base")
+    if not discovered_software["apt"]:
+        discovered_software["apt"].append("build-essential")
+
+    requirement_summary = ""
+    if discovered_software["apt"]:
+        requirement_summary += f"APT/System Packages: {', '.join(discovered_software['apt'])}\n"
+    if discovered_software["pip"]:
+        requirement_summary += f"Python PIP Packages: {', '.join(discovered_software['pip'])}\n"
+    if discovered_software["npm"]:
+        requirement_summary += f"Node NPM Packages: {', '.join(discovered_software['npm'])}\n"
+    if discovered_software["r"]:
+        requirement_summary += f"R Language Packages: {', '.join(discovered_software['r'])}\n"
+
+    # Display detected components
+    st.info(f"**Extracted Metadata Signature:**\n{requirement_summary}")
+
+    prompt = f"""
+    You are a deterministic YAML writer. Convert this explicit list of software applications directly into an Ansible playbook:
+    
+    {requirement_summary}
+    
+    Rules:
+    1. Start directly with '---'. 
+    2. No commentary, no text markdown fences, no explanations. 
+    3. Write clean native tasks matching the package types provided (e.g., use 'apt' module for System packages, 'pip' module for Python PIP packages, etc.).
+    4. Ensure the playbook is idempotent and ready for execution in a clean Ubuntu 22.04 environment.
+    5. Make sure the playbook is syntactically valid YAML and adheres to Ansible best practices.
+    6. Should be parseable by PyYAML without errors.
+    """
+
+    payload = {
+        "model": model_choice,
+        "prompt": prompt,
+        "stream": True,
+        "options": {
+            "temperature": 0.0,
+            "top_p": 0.1
+        }
+    }
+
+    # 3. Stream Generated Script live to the Streamlit layout
+    st.subheader("Ansible Playbook Generation Stream")
+    code_placeholder = st.empty()
+    full_yaml_script = ""
+
+    try:
+        response = requests.post(ollama_url, json=payload, timeout=None, stream=True)
+        
+        for line in response.iter_lines():
+            if line:
+                chunk = json.loads(line.decode('utf-8'))
+                text = chunk.get("response", "")
+                if "```" in text:
+                    text = text.replace("```yaml", "").replace("```", "")
+                full_yaml_script += text
+                # Dynamic terminal update inside the view panel
+                code_placeholder.code(full_yaml_script, language="yaml")
                 
-            software_name = target_repo.split("/")[-1] if "/" in target_repo else "custom-app"
-            runtime_platform = profile["platform"]
-            apt_packages = profile["apt_packages"]
-            ecosystem_packages = profile["ecosystem_packages"]
+    except Exception as e:
+        st.error(f"Inference Connection Crash: {e}")
+        st.stop()
 
-            # Explicit generation task block to mount inner ecosystem dependencies inside deploy.yml
-            task_block = ""
-            if apt_packages:
-                task_block += f"""    - name: Deploy discovered underlying OS system software prerequisites
-      ansible.builtin.apt:
-        name:
-{"\n".join([f"          - {dep}" for dep in apt_packages])}
-        state: present
-        update_cache: true
-      become: true\n\n"""
+    # 4. Strict Playbook Validation Framework
+    st.subheader("Ansible Script Validation Report")
+    
+    # Strip any stray leading/trailing string anomalies
+    clean_yaml_to_test = full_yaml_script.strip()
+    if "---" in clean_yaml_to_test:
+        clean_yaml_to_test = "---" + clean_yaml_to_test.split("---", 1)[1]
 
-            if ecosystem_packages:
-                task_block += f"""    - name: Ensure inner discovered ecosystem module dependencies are provisioned
-      ansible.builtin.debug:
-        msg: "Installing identified sub-modules: {', '.join(ecosystem_packages)}"
-
-    - name: Execute ecosystem library sync loop
-      vars:
-        discovered_libs:
-{"\n".join([f"          - {lib}" for lib in ecosystem_packages])}
-      ansible.builtin.debug:
-        msg: "Provisioning framework dependency asset -> {{{{ item }}}}"
-      loop: "{{{{ discovered_libs }}}}"\n\n"""
-
-            st.session_state.ansible_script = f"""---
-- name: Provision Automated Dynamic VRE Workspace for {software_name}
-  hosts: localhost
-  gather_facts: true
-  vars:
-    repo_source_url: "{target_repo}"
-    app_install_dir: "/opt/vre/{software_name}"
-
-  tasks:
-{task_block}    - name: Synchronize target workspace codebase trees from repository registry
-      ansible.builtin.git:
-        repo: "{{{{ repo_source_url }}}}"
-        dest: "{{{{ app_install_dir }}}}"
-        version: main
-"""
-
-            st.session_state.ttl_metadata = f"""@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix schema: <https://schema.org/> .
-@prefix codemeta: <https://codemeta.github.io/terms/> .
-@prefix clariah: <https://tools.clariah.nl/resource/> .
-
-clariah:{software_name} a schema:SoftwareApplication ;
-    schema:name "{software_name}" ;
-    schema:codeRepository "{target_repo}" ;
-    codemeta:runtimePlatform "{runtime_platform}" .
-"""
-
-    if st.session_state.ansible_script:
-        col_left, col_right = st.columns(2)
-        with col_left:
-            st.subheader("📋 Complete Harvested Ansible Blueprint (`deploy.yml`)")
-            st.code(st.session_state.ansible_script, language="yaml")
-        with col_right:
-            st.subheader("🕸️ SSHOC-NL KG Linked Data Alignment (`metadata.ttl`)")
-            st.code(st.session_state.ttl_metadata, language="turtle")
-
-    if execute_sandbox:
-        if not target_repo or "github.com" not in target_repo.lower():
-            st.error("❌ Invalid target coordinate pathway mapping.")
+    try:
+        # Load string into PyYAML engine to test basic syntax rules
+        parsed_yaml = yaml.safe_load(clean_yaml_to_test)
+        
+        if parsed_yaml is None:
+            st.error("❌ Validation Failed: Generated text is empty or non-parseable.")
+        elif isinstance(parsed_yaml, (list, dict)):
+            st.success("✅ Syntax Validation Passed: Valid YAML format structure compiled successfully!")
         else:
-            st.info("⚡ Activating multipass sandbox isolation architecture...")
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+            st.warning("⚠️ Warning: Structure compiled, but is missing structural array layouts.")
             
-            stages = [
-                (25, "Creating isolated virtual machine architecture..."),
-                (50, "Mounting application volumes and execution playbooks..."),
-                (75, "Running generated Ansible blueprints on localhost target environment..."),
-                (100, "Validating operational stability indexes and infrastructure hooks...")
-            ]
-            for percentage, msg in stages:
-                status_text.text(msg)
-                progress_bar.progress(percentage)
-                time.sleep(0.2)
-                
-            current_quality = repo_registry_dict.get(target_repo, {"quality": "98.0% (Dynamic Codebase)"})["quality"]
-            st.success(f"🎉 Secure Virtual Research Environment provisioned successfully! Infrastructure Runtime Quality: {current_quality}")
+    except yaml.YAMLError as exc:
+        st.error(f"❌ Syntax Validation Failed: Invalid Ansible YAML Structure.")
+        if hasattr(exc, 'problem_mark'):
+            mark = exc.problem_mark
+            st.text(f"Error location: Line {mark.line + 1}, Column {mark.column + 1}")
 
 # ---------------------------------------------------------
 # PAGE 3: EXPERIMENT REPRODUCER SIMULATOR
@@ -507,3 +587,7 @@ elif page == "4. Dataset Tables & Deep Dive":
         * **What this shows:** This pie chart breaks down the most common coding environments found across the active repositories in the CLARIAH ecosystem.
         * **The Key Takeaway:** **Python** makes up the largest slice of the ecosystem, followed closely by **Java** and mixed **C++** tools. This demonstrates that any automated system must be flexible enough to handle entirely different languages and build configurations seamlessly.
         """)
+
+if __name__ == "__main__":
+    # This simulates running the terminal command directly from code
+    os.system("python -m streamlit run app_streamlit.py")
