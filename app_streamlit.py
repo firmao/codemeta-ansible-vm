@@ -447,7 +447,8 @@ repo_url = st.text_input("Target GitHub Repository URL:", value="https://github.
 model_choice = st.selectbox("Select local Ollama Model Engine:", ["llama3.2:1b", "mistral", "llama3"])
 
 if st.button("Run Full Workspace Diagnostics"):
-    ollama_url = "http://127.0.0.1:11434/api/generate"
+    #ollama_url = "http://127.0.0.1:11434/api/generate"
+    ollama_url = "https://curly-space-system-g97rqrpj6xcwp7v-11434.app.github.dev/api/generate"
     
     try:
         requests.get("http://127.0.0.1:11434", timeout=3)
