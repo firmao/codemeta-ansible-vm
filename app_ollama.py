@@ -176,9 +176,11 @@ def generate_fast_ansible(repo_url: str, model_name: str = "llama3.2:1b"):
 
 if __name__ == "__main__":
     #target_repo = "https://github.com/odissei-data/odissei-kg"
-    target_repo = "https://github.com/sodascience/osmenrich"
+    #target_repo = "https://github.com/sodascience/osmenrich"
     #target_repo = "https://github.com/odissei-data/ODISSEI-code-library"
     #target_repo = "https://github.com/rug-compling/alpino"
     #target_repo = "https://github.com/firmao/wimu"
     #target_repo = "https://github.com/dice-group/CEDAL"
+    #target_repo = "https://github.com/netwerk-digitaal-erfgoed/dataset-register"
+    target_repo = "https://github.com/firmao/codemeta-ansible-vm"
     generate_fast_ansible(target_repo, model_name="llama3.2:1b")
