@@ -451,7 +451,8 @@ if st.button("Run Full Workspace Diagnostics"):
     ollama_url = "https://curly-space-system-g97rqrpj6xcwp7v-11434.app.github.dev/api/generate"
     
     try:
-        requests.get("http://127.0.0.1:11434", timeout=3)
+        #requests.get("http://127.0.0.1:11434", timeout=3)
+        requests.get("https://curly-space-system-g97rqrpj6xcwp7v-11434.app.github.dev", timeout=3)
     except requests.exceptions.ConnectionError:
         st.error("Error: Local Ollama engine is offline.")
         st.stop()
