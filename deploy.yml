@@ -1,0 +1,24 @@
+# Specs: CPU: 2, RAM: 2G, Disk: 15G
+- hosts: localhost
+  become: true
+  vars:
+    infra_disk: 15GB
+    infra_mem: 2GB
+    infra_cpu: 2
+  tasks:
+  - name: Update system cache
+    apt:
+      update_cache: 'yes'
+  - name: Install git
+    package:
+      name: git
+      state: present
+  - name: 'Ensure system software is installed: docker.io'
+    package:
+      name: docker.io
+      state: present
+    ignore_errors: true
+  - name: 'Clone application repository: osmenrich'
+    git:
+      repo: https://github.com/sodascience/osmenrich
+      dest: /home/ubuntu/osmenrich

@@ -1,29 +1,39 @@
-name: Provision Environment From CodeMeta Signatures
-  hosts: localhost
-  connection: local
-  become: true
-  tasks:
-    - name: Install Detected System/APT Requirements
-      apt:
-        name: "{{ item }}"
-        state: present
-        update_cache: yes
-      loop:
-        - git
-        - htop
-        - python3
-        - python3-pip
-        - r-base
-    - name: Install Detected Python/PIP Dependencies
-      pip:
-        name: "{{ item }}"
-        state: present
-      loop:
-        - Flask
-        - PyYAML
-        - matplotlib
-        - networkx
-        - pandas
-        - rdflib
-        - requests
-        - streamlit
+name: Validar Playbook Ansible
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch: # Permite rodar manualmente se quiser
+
+jobs:
+  ansible-lint-and-run:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Baixa o código do seu repositório para o runner
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      # 2. Instala o Ansible no runner Ubuntu do GitHub
+      - name: Instalar Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      # 3. Executa uma checagem de sintaxe (Syntax Check)
+      - name: Validar sintaxe do Playbook
+        run: |
+          ansible-playbook playbook.yml --syntax-check
+
+      # 4. Executa um teste de simulação (Dry-Run / Check Mode)
+      # Essa etapa simula as alterações sem aplicar nada de verdade
+      - name: Simular execução do Playbook (Dry-run)
+        run: |
+          ansible-playbook -i "localhost," playbook.yml --check
+
+      # 5. Executa o Playbook para valer no ambiente temporário do GitHub
+      - name: Executar Playbook localmente
+        run: |
+          ansible-playbook -i "localhost," playbook.yml
