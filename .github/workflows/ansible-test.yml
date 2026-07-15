@@ -1,5 +1,4 @@
----
-- name: Provision Environment From CodeMeta Signatures
+name: Provision Environment From CodeMeta Signatures
   hosts: localhost
   connection: local
   become: true
