@@ -1,0 +1,27 @@
+---
+- name: Validar e aplicar configuracoes locais no runner do GitHub
+  hosts: localhost
+  connection: local
+  become: true # Permite rodar tarefas com privilégios de administrador (sudo), se necessário
+
+  tasks:
+    - name: Garantir que ferramentas basicas estejam instaladas
+      apt:
+        name:
+          - curl
+          - git
+        state: present
+        update_cache: yes
+
+    - name: Criar um arquivo de teste para garantir que a escrita funciona
+      copy:
+        content: "Configuração validada com sucesso pelo GitHub Actions!"
+        dest: /tmp/validacao_ansible.txt
+
+    - name: Exibir conteudo do arquivo criado
+      command: cat /tmp/validacao_ansible.txt
+      register: resultado_teste
+
+    - name: Mostrar resultado no log do GitHub Actions
+      debug:
+        msg: "{{ resultado_teste.stdout }}"
